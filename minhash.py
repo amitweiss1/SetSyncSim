@@ -11,14 +11,14 @@ class MinHash:
         """
         self.num_permutations = num_permutations
         # Generate random hash functions parameters (ax + b mod p)
-        self.prime = 2**31 - 1  # Large prime number
+        self.prime = 2**31 -1 # Large prime number
         self.a = np.random.randint(1, self.prime, num_permutations)
         self.b = np.random.randint(0, self.prime, num_permutations)
-    
+
     def _hash_function(self, x: int, a: int, b: int) -> int:
         """Apply a hash function of the form (ax + b) mod p."""
-        return ((a * x + b) % self.prime)
-    
+        return (int(a % self.prime) * int(x % self.prime) + int(b % self.prime)) % self.prime
+
     def get_signature(self, input_set: Set[Any]) -> List[int]:
         """
         Compute MinHash signature for a set.

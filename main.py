@@ -74,7 +74,7 @@ class ProbabilityDistributions:
 
 
 def run_simulation(set_size: int, prob_func: Callable[[int], float], max_pdf: float = 1.0,
-                   num_permutations: int = 100, num_strata: int = 8,
+                   num_permutations: int = 10, num_strata: int = 8,
                    distribution_name: str = "Unknown"):
     """
     Run simulation comparing MinHash and Strata Estimator.
@@ -90,42 +90,48 @@ def run_simulation(set_size: int, prob_func: Callable[[int], float], max_pdf: fl
     set1 = generate_first_set(set_size, prob_func, max_pdf)
     set2 = generate_second_set(set1)
 
-    print(f"\n=== {distribution_name} Distribution ===")
-    print(set1)
-    print("size of set1:", len(set1))
-    print("=" * 50)
-    print(set2)
-    print("size of set2:", len(set2))
+    new_set1 = set()
+    new_set2 = set()
+    for node in set1:
+        new_set1.add(node.value)
+    for node in set2:
+        new_set2.add(node.value)
+
+    # print(f"\n=== {distribution_name} Distribution ===")
+    # print(set1)
+    # print("size of set1:", len(set1))
+    # print("=" * 50)
+    # print(set2)
+    # print("size of set2:", len(set2))
 
     # # Calculate actual Jaccard similarity
-    # intersection = len(set1 & set2)
-    # union = len(set1 | set2)
-    # actual_similarity = intersection / union
+    intersection = len(new_set1 & new_set2)
+    union = len(new_set1 | new_set2)
+    actual_diff = union - intersection
     #
     # # MinHash estimation
-    # minhash = MinHash(num_permutations=num_permutations)
-    # minhash_similarity = minhash.estimate_similarity(set1, set2)
+    minhash = MinHash(num_permutations=num_permutations)
+    minhash_similarity = minhash.estimate_similarity(new_set1, new_set2)
     #
-    # # Strata estimation
-    # strata = StrataEstimator(num_strata=num_strata)
-    # strata_similarity, strata_error = strata.estimate_similarity(set1, set2)
+    # Strata estimation
+    strata = StrataEstimator(num_strata=num_strata)
+    strata_similarity, strata_error = strata.estimate_similarity(new_set1,new_set2)
     #
-    # # Print results
-    # print(f"\n=== {distribution_name} Distribution ===")
-    # print(f"Set 1 size: {len(set1)}")
-    # print(f"Set 2 size: {len(set2)}")
-    # print(f"Intersection size: {intersection}")
-    # print(f"Union size: {union}")
-    # print(f"\nActual Jaccard similarity: {actual_similarity:.4f}")
-    # print(f"MinHash estimated similarity: {minhash_similarity:.4f}")
-    # print(f"Strata estimated similarity: {strata_similarity:.4f} ± {strata_error:.4f}")
-    # print(f"\nMinHash absolute error: {abs(minhash_similarity - actual_similarity):.4f}")
-    # print(f"Strata absolute error: {abs(strata_similarity - actual_similarity):.4f}")
-    # print("=" * 50)
+    # Print results
+    print(f"\n=== {distribution_name} Distribution ===============")
+    print(f"Set 1 size: {len(new_set1)}")
+    print(f"Set 2 size: {len(new_set2)}")
+    print(f"Intersection size: {intersection}")
+    print(f"Union size: {union}")
+    print(f"\nActual diff size: {(actual_diff):.4f}")
+    print(f"MinHash estimated diff: {(1-minhash_similarity):.4f}")
+
+    print(f"Strata estimated diff: {(1 - strata_similarity):.4f}")
+    print("=" * 50)
 
 if __name__ == "__main__":
     print("Running simulation...")
-    set_sizes = [100]
+    set_sizes = [10000]
 
     # Create instances of all distributions
     distributions = {

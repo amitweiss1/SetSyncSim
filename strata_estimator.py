@@ -1,77 +1,57 @@
 import numpy as np
-from typing import Set, List, Any, Tuple
-import mmh3  # MurmurHash3 for better hash distribution
+from typing import Set, Any, Tuple
 
 class StrataEstimator:
-    def __init__(self, num_strata: int = 4, strata_size: int = 8):
-        """
-        Initialize Strata Estimator.
-        
-        Args:
-            num_strata (int): Number of strata to use
-            strata_size (int): Size of each stratum
-        """
+    def __init__(self, num_strata: int = 8, hash_range: int = 2**32 - 1):
         self.num_strata = num_strata
-        self.strata_size = strata_size
-        self.total_hashes = num_strata * strata_size
-    
-    def _hash_element(self, element: Any, seed: int) -> int:
-        """Generate hash value for an element using MurmurHash3."""
-        return mmh3.hash(str(element), seed)
-    
-    def _get_strata(self, input_set: Set[Any]) -> List[List[int]]:
+        self.hash_range = hash_range
+
+    def _stratum(self, hash_val: int) -> int:
         """
-        Divide elements into strata based on their hash values.
-        
-        Args:
-            input_set: Input set of elements
-        
-        Returns:
-            List of strata, where each stratum contains hash values
+        Determine the stratum index based on the leading zero bits.
         """
-        strata = [[] for _ in range(self.num_strata)]
-        
+        # Calculate how many leading zeros in binary representation
+        for i in range(self.num_strata):
+            if hash_val < (1 << (self.hash_range.bit_length() - i - 1)):
+                return i
+        return self.num_strata - 1
+
+    def _stratify(self, input_set: Set[Any]) -> dict:
+        """
+        Assign elements to strata based on their hash value.
+        """
+        strata = {i: set() for i in range(self.num_strata)}
         for element in input_set:
-            for i in range(self.total_hashes):
-                hash_value = self._hash_element(element, i)
-                stratum_idx = i // self.strata_size
-                strata[stratum_idx].append(hash_value)
-        
-        # Sort each stratum
-        for stratum in strata:
-            stratum.sort()
-            # Keep only the smallest values up to strata_size
-            del stratum[self.strata_size:]
-        
+            h = hash(element) % self.hash_range
+            s = self._stratum(h)
+            strata[s].add(h)
         return strata
-    
+
     def estimate_similarity(self, set1: Set[Any], set2: Set[Any]) -> Tuple[float, float]:
         """
-        Estimate Jaccard similarity between two sets using Strata Estimator.
-        
-        Args:
-            set1: First input set
-            set2: Second input set
-        
+        Estimate Jaccard similarity using the strata method.
+
         Returns:
-            Tuple of (estimated Jaccard similarity, estimated standard error)
+            Tuple of (estimated_similarity, estimated_error)
         """
-        strata1 = self._get_strata(set1)
-        strata2 = self._get_strata(set2)
-        
-        # Calculate similarities for each stratum
-        stratum_similarities = []
-        for s1, s2 in zip(strata1, strata2):
-            # Count matching elements
-            matches = len(set(s1) & set(s2))
-            total = len(set(s1) | set(s2))
-            if total > 0:
-                stratum_similarities.append(matches / total)
-            else:
-                stratum_similarities.append(1.0)  # Empty sets are considered identical
-        
-        # Calculate mean and standard error
-        similarity = np.mean(stratum_similarities)
-        std_error = np.std(stratum_similarities) / np.sqrt(self.num_strata)
-        
-        return similarity, std_error 
+        strata1 = self._stratify(set1)
+        strata2 = self._stratify(set2)
+
+        total_matches = 0
+        total_candidates = 0
+
+        for i in range(self.num_strata):
+            h1 = strata1[i]
+            h2 = strata2[i]
+            intersection = len(h1 & h2)
+            union = len(h1 | h2)
+            if union > 0:
+                total_matches += intersection
+                total_candidates += union
+
+        if total_candidates == 0:
+            return 0.0, 0.0
+
+        estimate = total_matches / total_candidates
+        error = 1 / np.sqrt(total_candidates) if total_candidates > 0 else 1.0
+        return estimate, error

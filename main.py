@@ -1,10 +1,22 @@
 import numpy as np
 from typing import Set, Callable
+from node import Node
 from minhash import MinHash
 from strata_estimator import StrataEstimator
-from scipy import stats
 
-def generate_set(size: int, prob_func: Callable[[int], float]) -> Set[int]:
+from scipy.stats import norm, uniform, expon, gamma
+from typing import Callable
+
+
+def sample_from_pdf(pdf: Callable[[float], float], max_pdf: float) -> float:
+    while True:
+        x = round(np.random.uniform(0, 1), 3)
+        y = np.random.uniform(0, max_pdf)
+        if y <= pdf(x):
+            return x
+
+
+def generate_first_set(size: int, prob_func: Callable[[float], float], max_pdf) -> Set[Node]:
     """
     Generate a set of integers based on a probability function.
     
@@ -16,55 +28,57 @@ def generate_set(size: int, prob_func: Callable[[int], float]) -> Set[int]:
         Set of integers
     """
     result = set()
-    num = 0
-    while len(result) < size:
-        if np.random.random() < prob_func(num):
-            result.add(num)
-        num += 1
+    for index in range(1, size + 1):
+        new_node = Node(index)
+        new_node.set_probability(sample_from_pdf(prob_func, max_pdf))
+        result.add(new_node)
+
     return result
 
-class ProbabilityDistributions:
-    @staticmethod
-    def normal(mean=0, std=1):
-        """Normal distribution probability function."""
-        return lambda x: max(0, min(1, stats.norm.pdf(x, mean, std) * 5))
-    
-    @staticmethod
-    def binomial(n=10, p=0.5):
-        """Binomial distribution probability function."""
-        return lambda x: max(0, min(1, stats.binom.pmf(x % (n+1), n, p) * 3))
-    
-    @staticmethod
-    def poisson(lambda_param=5):
-        """Poisson distribution probability function."""
-        return lambda x: max(0, min(1, stats.poisson.pmf(x, lambda_param) * 3))
-    
-    @staticmethod
-    def uniform(a=0, b=1):
-        """Uniform distribution probability function."""
-        return lambda x: b if a <= x <= b else 0
-    
-    @staticmethod
-    def exponential(lambda_param=1):
-        """Exponential distribution probability function."""
-        return lambda x: max(0, min(1, stats.expon.pdf(x, scale=1/lambda_param) * 3))
-    
-    @staticmethod
-    def gamma(alpha=2, beta=1):
-        """Gamma distribution probability function."""
-        return lambda x: max(0, min(1, stats.gamma.pdf(x, alpha, scale=1/beta) * 3))
-    
-    @staticmethod
-    def geometric(p=0.5):
-        """Geometric distribution probability function."""
-        return lambda x: max(0, min(1, stats.geom.pmf(x+1, p) * 3))
 
-def run_simulation(set_size: int, prob_func: Callable[[int], float], 
-                  num_permutations: int = 100, num_strata: int = 8,
-                  distribution_name: str = "Unknown"):
+def generate_second_set(set1: Set[Node]) -> Set[Node]:
+    set2 = set()
+    for node in set1:
+        new_node = Node(node.value)
+        x = round(np.random.uniform(0, 1), 3)
+        if x <= node.get_probability():
+            set2.add(new_node)
+
+    return set2
+
+
+class ProbabilityDistributions:
+
+    @staticmethod
+    def normal(mean=0.5, std=0.1) -> Callable[[float], float]:
+        dist = norm(loc=mean, scale=std)
+        norm_const = dist.cdf(1) - dist.cdf(0)
+        return lambda x: dist.pdf(x) / norm_const if 0 <= x <= 1 else 0
+
+    @staticmethod
+    def uniform(a=0, b=1) -> Callable[[float], float]:
+        dist = uniform(loc=a, scale=b - a)
+        return lambda x: dist.pdf(x) if a <= x <= b else 0
+
+    @staticmethod
+    def exponential(lambda_param=1) -> Callable[[float], float]:
+        dist = expon(scale=1 / lambda_param)
+        norm_const = dist.cdf(1) - dist.cdf(0)
+        return lambda x: dist.pdf(x) / norm_const if 0 <= x <= 1 else 0
+
+    @staticmethod
+    def gamma(alpha=2, beta=1) -> Callable[[float], float]:
+        dist = gamma(a=alpha, scale=1 / beta)
+        norm_const = dist.cdf(1) - dist.cdf(0)
+        return lambda x: dist.pdf(x) / norm_const if 0 <= x <= 1 else 0
+
+
+def run_simulation(set_size: int, prob_func: Callable[[int], float], max_pdf: float = 1.0,
+                   num_permutations: int = 100, num_strata: int = 8,
+                   distribution_name: str = "Unknown"):
     """
     Run simulation comparing MinHash and Strata Estimator.
-    
+
     Args:
         set_size (int): Size of sets to generate
         prob_func (Callable): Probability function for set generation
@@ -73,52 +87,74 @@ def run_simulation(set_size: int, prob_func: Callable[[int], float],
         distribution_name (str): Name of the probability distribution
     """
     # Generate two sets
-    set1 = generate_set(set_size, prob_func)
-    set2 = generate_set(set_size, prob_func)
-    
-    # Calculate actual Jaccard similarity
-    intersection = len(set1 & set2)
-    union = len(set1 | set2)
-    actual_similarity = intersection / union
-    
-    # MinHash estimation
-    minhash = MinHash(num_permutations=num_permutations)
-    minhash_similarity = minhash.estimate_similarity(set1, set2)
-    
-    # Strata estimation
-    strata = StrataEstimator(num_strata=num_strata)
-    strata_similarity, strata_error = strata.estimate_similarity(set1, set2)
-    
-    # Print results
+    set1 = generate_first_set(set_size, prob_func, max_pdf)
+    set2 = generate_second_set(set1)
+
     print(f"\n=== {distribution_name} Distribution ===")
-    print(f"Set 1 size: {len(set1)}")
-    print(f"Set 2 size: {len(set2)}")
-    print(f"Intersection size: {intersection}")
-    print(f"Union size: {union}")
-    print(f"\nActual Jaccard similarity: {actual_similarity:.4f}")
-    print(f"MinHash estimated similarity: {minhash_similarity:.4f}")
-    print(f"Strata estimated similarity: {strata_similarity:.4f} ± {strata_error:.4f}")
-    print(f"\nMinHash absolute error: {abs(minhash_similarity - actual_similarity):.4f}")
-    print(f"Strata absolute error: {abs(strata_similarity - actual_similarity):.4f}")
+    print(set1)
+    print("size of set1:", len(set1))
     print("=" * 50)
+    print(set2)
+    print("size of set2:", len(set2))
+
+    # # Calculate actual Jaccard similarity
+    # intersection = len(set1 & set2)
+    # union = len(set1 | set2)
+    # actual_similarity = intersection / union
+    #
+    # # MinHash estimation
+    # minhash = MinHash(num_permutations=num_permutations)
+    # minhash_similarity = minhash.estimate_similarity(set1, set2)
+    #
+    # # Strata estimation
+    # strata = StrataEstimator(num_strata=num_strata)
+    # strata_similarity, strata_error = strata.estimate_similarity(set1, set2)
+    #
+    # # Print results
+    # print(f"\n=== {distribution_name} Distribution ===")
+    # print(f"Set 1 size: {len(set1)}")
+    # print(f"Set 2 size: {len(set2)}")
+    # print(f"Intersection size: {intersection}")
+    # print(f"Union size: {union}")
+    # print(f"\nActual Jaccard similarity: {actual_similarity:.4f}")
+    # print(f"MinHash estimated similarity: {minhash_similarity:.4f}")
+    # print(f"Strata estimated similarity: {strata_similarity:.4f} ± {strata_error:.4f}")
+    # print(f"\nMinHash absolute error: {abs(minhash_similarity - actual_similarity):.4f}")
+    # print(f"Strata absolute error: {abs(strata_similarity - actual_similarity):.4f}")
+    # print("=" * 50)
 
 if __name__ == "__main__":
     print("Running simulation...")
-    # Example usage
-    set_size = [10]
-    
+    set_sizes = [100]
+
     # Create instances of all distributions
     distributions = {
-        "Normal": ProbabilityDistributions.normal(mean=5, std=2),
-        "Binomial": ProbabilityDistributions.binomial(n=10, p=0.5),
-        "Poisson": ProbabilityDistributions.poisson(lambda_param=5),
-        "Uniform": ProbabilityDistributions.uniform(a=0, b=0.5),
-        "Exponential": ProbabilityDistributions.exponential(lambda_param=1),
-        "Gamma": ProbabilityDistributions.gamma(alpha=2, beta=1),
-        "Geometric": ProbabilityDistributions.geometric(p=0.3)
+        "Normal": {
+            "func": ProbabilityDistributions.normal(mean=0.5, std=0.1),
+            "max_pdf": 4.0
+        },
+        "Uniform": {
+            "func": ProbabilityDistributions.uniform(0, 1),
+            "max_pdf": 1.0
+        },
+        "Exponential": {
+            "func": ProbabilityDistributions.exponential(lambda_param=5),
+            "max_pdf": 2.5
+        },
+        "Gamma": {
+            "func": ProbabilityDistributions.gamma(alpha=2, beta=2),
+            "max_pdf": 2.0
+        }
     }
-    
+
     # Run simulation for each distribution
-    for size in set_size:
-        for dist_name, prob_func in distributions.items():
-            run_simulation(size, prob_func, distribution_name=dist_name) 
+    for size in set_sizes:
+        for dist_name, dist_config in distributions.items():
+            prob_func = dist_config["func"]
+            max_pdf = dist_config["max_pdf"]
+            run_simulation(
+                set_size=size,
+                prob_func=prob_func,
+                max_pdf=max_pdf,
+                distribution_name=dist_name
+            )

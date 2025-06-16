@@ -1,57 +1,51 @@
-import numpy as np
-from typing import Set, Any, Tuple
+import hashlib
+from Py_IBLT import IBLT
+from typing import Set
 
-class StrataEstimator:
-    def __init__(self, num_strata: int = 8, hash_range: int = 2**32 - 1):
-        self.num_strata = num_strata
-        self.hash_range = hash_range
+def count_leading_zeros(data: bytes) -> int:
+    bits = ''.join(f"{byte:08b}" for byte in data)
+    return len(bits) - len(bits.lstrip('0'))
 
-    def _stratum(self, hash_val: int) -> int:
-        """
-        Determine the stratum index based on the leading zero bits.
-        """
-        # Calculate how many leading zeros in binary representation
-        for i in range(self.num_strata):
-            if hash_val < (1 << (self.hash_range.bit_length() - i - 1)):
-                return i
-        return self.num_strata - 1
+def hash_to_stratum(x: str) -> int:
+    h = hashlib.sha256(str(x).encode('utf8')).digest()
+    return count_leading_zeros(h)
 
-    def _stratify(self, input_set: Set[Any]) -> dict:
-        """
-        Assign elements to strata based on their hash value.
-        """
-        strata = {i: set() for i in range(self.num_strata)}
-        for element in input_set:
-            h = hash(element) % self.hash_range
-            s = self._stratum(h)
-            strata[s].add(h)
-        return strata
+def estimate_sym_diff_strata(
+    set_a: Set[str],
+    set_b: Set[str],
+    max_strata: int = 64,
+    iblt_size: int = 1024,
+    num_hashes: int = 3
+) -> int:
+    # Create one IBLT per stratum for each set
+    iblt_a = [IBLT(iblt_size, num_hashes, key_size=0, value_size=0) for _ in range(max_strata)]
+    iblt_b = [IBLT(iblt_size, num_hashes, key_size=0, value_size=0) for _ in range(max_strata)]
 
-    def estimate_similarity(self, set1: Set[Any], set2: Set[Any]) -> Tuple[float, float]:
-        """
-        Estimate Jaccard similarity using the strata method.
+    # Insert elements into corresponding IBLTs
+    for x in set_a:
+        s = hash_to_stratum(x)
+        if s >= max_strata: continue
+        iblt_a[s].insert(x, None)
 
-        Returns:
-            Tuple of (estimated_similarity, estimated_error)
-        """
-        strata1 = self._stratify(set1)
-        strata2 = self._stratify(set2)
+    for x in set_b:
+        s = hash_to_stratum(x)
+        if s >= max_strata: continue
+        iblt_b[s].insert(x, None)
 
-        total_matches = 0
-        total_candidates = 0
+    # Find highest stratum that decodes successfully
+    highest = -1
+    for s in range(max_strata):
+        diff_iblt = iblt_a[s].subtract(iblt_b[s])
+        status, entries, deleted = diff_iblt.list_entries()
+        # RESULT_LIST_ENTRIES_COMPLETE indicates full decode
+        if status == IBLT.RESULT_LIST_ENTRIES_COMPLETE:
+            highest = s
 
-        for i in range(self.num_strata):
-            h1 = strata1[i]
-            h2 = strata2[i]
-            intersection = len(h1 & h2)
-            union = len(h1 | h2)
-            if union > 0:
-                total_matches += intersection
-                total_candidates += union
+    if highest == -1:
+        raise RuntimeError("No decodable strata; try increasing IBLT size.")
 
-        if total_candidates == 0:
-            return 0.0, 0.0
+    # Estimate symmetric difference as approx 2^highest
+    return 2 ** highest
 
-        estimate = total_matches / total_candidates
-        error = 1 / np.sqrt(total_candidates) if total_candidates > 0 else 1.0
-        return estimate, error
+# Example usage:
+

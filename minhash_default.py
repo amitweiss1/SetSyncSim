@@ -25,8 +25,7 @@ def calc_minhash(k: int, set_a: set, set_b: set):
 
 
 def calc_symmetric_diff_minhash(set_a: set, set_b: set):
-    #k = int(log(len(set_a)))
-    k = 10
+    k = int(log(len(set_a)))
     J = calc_minhash(k, set_a, set_b)
     # return J
     return (len(set_a) + len(set_b)) * ((1 - J) / (1 + J))

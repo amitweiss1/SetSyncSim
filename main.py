@@ -252,7 +252,9 @@ if __name__ == "__main__":
     print("Running simulation...")
     results = []
     set_sizes = [100, 500, 1000]
-    mus = [0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]
+    # mus = [0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]
+    mus = [0.5]
+    num_rehearsals = 5  # Number of repetitions per parameter set
 
     for mu in mus:
         normal_params = Distributions.get_normal_params(mu)
@@ -271,19 +273,29 @@ if __name__ == "__main__":
             for dist_name, dist_config in distributions.items():
                 prob_func = dist_config.pdf
                 max_pdf = calculate_max_pdf(prob_func)
-                sim_results = run_simulation(
-                    set_size=size,
-                    prob_func=prob_func,
-                    max_pdf=max_pdf,
-                    distribution_name=dist_name,
-                    mu=mu
-                )
-                results.extend(sim_results)
-    print_plots(results)
+                for rehearsal in range(num_rehearsals):
+                    sim_results = run_simulation(
+                        set_size=size,
+                        prob_func=prob_func,
+                        max_pdf=max_pdf,
+                        distribution_name=dist_name,
+                        mu=mu
+                    )
+                    results.extend(sim_results)
 
-    # Save the results DataFrame to a CSV file
+    # Convert to DataFrame
     import pandas as pd
     import os
     os.makedirs("plots", exist_ok=True)
     df = pd.DataFrame(results)
-    df.to_csv("plots/simulation_results.csv", index=False)
+
+    # Group by parameters and average Entropy and ErrorPercent
+    group_cols = ["Distribution", "Mean", "SetSize", "Algorithm"]
+    avg_df = df.groupby(group_cols, as_index=False)[["Entropy", "ErrorPercent"]].mean()
+
+    # Save both raw and averaged results
+    df.to_csv("plots/simulation_results_raw.csv", index=False)
+    avg_df.to_csv("plots/simulation_results_avg.csv", index=False)
+
+    # Use averaged results for plotting
+    print_plots(avg_df)

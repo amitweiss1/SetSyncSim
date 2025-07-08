@@ -1,5 +1,10 @@
+from collections import defaultdict
+
 import numpy as np
 from typing import Set, Callable
+
+from numpy import trapezoid
+
 from node import Node
 # from minhash import MinHash
 # from strata_estimator import  estimate_sym_diff_strata
@@ -7,6 +12,7 @@ from minhash_default import calc_symmetric_diff_minhash
 from scipy.stats import norm, expon, gamma, uniform as scipy_uniform
 from hyperloglog import calc_hyperloglog
 import Distributaions as Distributions
+from strata import estimate_symmetric_difference_strata
 import os
 
 
@@ -84,43 +90,19 @@ def calc_expectation(set1: Set[Node]) -> float:
     return total / len(set1) if set1 else 0.0
 
 def calc_theoretical_entropy(pdf, a=0, b=1, num_points=1000):
-    """
-    מחשב אנטרופיה דיפרנציאלית של התפלגות עם pdf על הקטע [a,b]
-    h(X) = -∫ f(x) log(f(x)) dx
-    """
-    # נבנה גריד לנקודות
     xs = np.linspace(a, b, num_points)
     pdf_vals = np.array([pdf(x) for x in xs])
-    pdf_vals = np.clip(pdf_vals, 1e-12, None)  # למנוע log(0)
+    pdf_vals = np.clip(pdf_vals, 1e-12, None)
     entropy_integrand = -pdf_vals * np.log(pdf_vals)
-    entropy = np.trapz(entropy_integrand, xs)
+    entropy = trapezoid(entropy_integrand, xs)
     return entropy
 
-def calc_entropy(set1, num_bins=50):
-    values = [node.value for node in set1]
-    hist, _ = np.histogram(values, bins=num_bins, range=(0, 1), density=False)
-    p = hist / np.sum(hist)
-    p = p[p > 0]  # ignore empty bins
-    entropy = -np.sum(p * np.log(p))  # ln → units: nats
-    return entropy
-
-# def calc_entropy(set1: Set[Node]) -> float:
-#     # Extract the probability values from the nodes
-#     probs = [node.get_probability() for node in set1]
-
-#     # Compute the total sum of probabilities
-#     total = sum(probs)
-
-#     # If all probabilities are zero, there is no information (entropy = 0)
-#     if total == 0:
-#         return 0.0
-
-#     # Normalize probabilities so they sum to 1 (required for entropy calculation)
-#     normalized_probs = [p / total for p in probs]
-
-#     # Compute entropy using the Shannon formula: H = -∑ p * log2(p)
-#     entropy = -sum(p * np.log2(p) for p in normalized_probs if p > 0)
-
+# def calc_entropy(set1, num_bins=50):
+#     values = [node.value for node in set1]
+#     hist, _ = np.histogram(values, bins=num_bins, range=(0, 1), density=False)
+#     p = hist / np.sum(hist)
+#     p = p[p > 0]  # ignore empty bins
+#     entropy = -np.sum(p * np.log(p))  # ln → units: nats
 #     return entropy
 
 def calculate_max_pdf(pdf: Callable[[float], float], resolution: int = 1000) -> float:
@@ -146,8 +128,8 @@ def run_simulation(set_size: int, prob_func: Callable[[float], float], max_pdf: 
 
     # Estimate symmetric difference using SOTA algorithms estimator
     symmetric_diff_minhash = calc_symmetric_diff_minhash(new_set1, new_set2)
-    ##symmetric_diff_hyperloglog = calc_hyperloglog(new_set1, new_set2)
     symmetric_diff_theoretical = (1 - expectation) * len(new_set1)
+    symetric_diff_strata = estimate_symmetric_difference_strata(new_set1, new_set2)
 
     print(f"\n============== {distribution_name} Distribution ===============")
     print (f"\nExpectation {mu:.4f}")
@@ -159,9 +141,7 @@ def run_simulation(set_size: int, prob_func: Callable[[float], float], max_pdf: 
     print(f"Expectation of symmetric diff: {symmetric_diff_theoretical:4f}")
     print(f"Entropy of Set 1: {entropy:.4f}")
     print(f"MinHash symmetric diff: {symmetric_diff_minhash:.4f}")
-
-    # debug = [node.probability for node in set1]
-    # print(f"Debug: {debug}")
+    print(f"Strata symmetric diff: {symetric_diff_strata:.4f}")
 
 
     # Return results for plotting
@@ -181,13 +161,21 @@ def run_simulation(set_size: int, prob_func: Callable[[float], float], max_pdf: 
             "Entropy": entropy,
             "Algorithm": "Theoretical Expectation",
             "ErrorPercent": abs(symmetric_diff_theoretical - actual_diff) / actual_diff * 100 if actual_diff > 0 else 0
+        },
+        {
+            "Distribution": distribution_name,
+            "Mean": mu,
+            "SetSize": set_size,
+            "Entropy": entropy,
+            "Algorithm": "Strata",
+            "ErrorPercent": abs(symetric_diff_strata - actual_diff) / actual_diff * 100 if actual_diff > 0 else 0
         }
     ]
 
 
 
 def print_plots(results):
-    import pandas as pd
+    import pandas as pan
     import matplotlib.pyplot as plt
     import seaborn as sns
     import itertools
@@ -195,7 +183,7 @@ def print_plots(results):
     # Create directory for plots if it doesn't exist
     os.makedirs("plots", exist_ok=True)
 
-    df = pd.DataFrame(results)
+    df = pan.DataFrame(results)
 
     # Plot 1: Error vs. Set Size (for each Mean and Distribution)
     for dist in df["Distribution"].unique():
@@ -251,9 +239,8 @@ def print_plots(results):
 if __name__ == "__main__":
     print("Running simulation...")
     results = []
-    set_sizes = [100, 500, 1000]
-    # mus = [0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]
-    mus = [0.5]
+    set_sizes = [100, 500, 1000, 2000]
+    mus = [0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]
     num_rehearsals = 5  # Number of repetitions per parameter set
 
     for mu in mus:
@@ -269,6 +256,9 @@ if __name__ == "__main__":
             "Gamma": ProbabilityDistributions.gamma(alpha=gamma_params["alpha"], beta=gamma_params["lambda"])
         }
 
+        # Initialize a dictionary to store intermediate results for averaging
+        aggregated_results = defaultdict(lambda: {"Entropy": 0, "ErrorPercent": 0, "count": 0})
+
         for size in set_sizes:
             for dist_name, dist_config in distributions.items():
                 prob_func = dist_config.pdf
@@ -281,7 +271,23 @@ if __name__ == "__main__":
                         distribution_name=dist_name,
                         mu=mu
                     )
-                    results.extend(sim_results)
+                    for result in sim_results:
+                        key = (result["Distribution"], result["SetSize"], result["Algorithm"], result["Mean"])
+                        aggregated_results[key]["Entropy"] += result["Entropy"]
+                        aggregated_results[key]["ErrorPercent"] += result["ErrorPercent"]
+                        aggregated_results[key]["count"] += 1
+
+        # Calculate averages and store in the final results list
+        for key, values in aggregated_results.items():
+            avg_result = {
+                "Distribution": key[0],
+                "SetSize": key[1],
+                "Algorithm": key[2],
+                "Mean": key[3],
+                "Entropy": values["Entropy"] / values["count"],
+                "ErrorPercent": values["ErrorPercent"] / values["count"],
+            }
+            results.append(avg_result)
 
     # Convert to DataFrame
     import pandas as pd

@@ -1,5 +1,5 @@
 import numpy as np
-from scipy.stats import norm, uniform, expon, gamma
+from scipy.stats import norm, uniform, expon, gamma, lognorm
 from scipy.optimize import minimize_scalar
 
 # ===== Utility: truncated expectation on [0, 1] =====
@@ -47,4 +47,18 @@ def find_gamma_params(target_mu):
     lambda_opt = res.x
     alpha_opt = target_mu * lambda_opt
     return {"alpha": alpha_opt, "lambda": lambda_opt}
+
+# ===== 5. Log-normal (truncated) =====
+def find_lognormal_params(target_mu):
+    def objective(sigma):
+        if sigma <= 0:
+            return np.inf
+        mu = 0  # Fix mu=0 for simplicity
+        dist = lognorm(s=sigma, scale=np.exp(mu))
+        exp = truncated_expectation(dist)
+        return abs(exp - target_mu)
+    res = minimize_scalar(objective, bounds=(1e-3, 3), method='bounded')
+    sigma_opt = res.x
+    mu_opt = 0
+    return {"mu": mu_opt, "sigma": sigma_opt}
 

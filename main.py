@@ -9,7 +9,7 @@ from node import Node
 # from minhash import MinHash
 # from strata_estimator import  estimate_sym_diff_strata
 from minhash_default import calc_symmetric_diff_minhash
-from scipy.stats import norm, expon, gamma, uniform as scipy_uniform
+from scipy.stats import norm, expon, gamma, uniform as scipy_uniform, lognorm
 from hyperloglog import calc_hyperloglog
 import Distributaions as Distributions
 from strata import estimate_symmetric_difference_strata
@@ -51,6 +51,14 @@ class ProbabilityDistributions:
         expectation = alpha / beta
         dist = gamma(a=alpha, scale=1 / beta)
         norm_const = dist.cdf(1) - dist.cdf(0)
+        pdf = lambda x: dist.pdf(x) / norm_const if 0 <= x <= 1 else 0
+        return Distribution(pdf=pdf, expectation=expectation)
+
+    @staticmethod
+    def lognormal(mu=0, sigma=1) -> Distribution:
+        dist = lognorm(s=sigma, scale=np.exp(mu))
+        norm_const = dist.cdf(1) - dist.cdf(0)
+        expectation = Distributions.truncated_expectation(dist)
         pdf = lambda x: dist.pdf(x) / norm_const if 0 <= x <= 1 else 0
         return Distribution(pdf=pdf, expectation=expectation)
 
@@ -248,12 +256,14 @@ if __name__ == "__main__":
         uniform_params = Distributions.get_uniform_params(mu)
         exponential_params = Distributions.find_lambda_for_exponential(mu)
         gamma_params = Distributions.find_gamma_params(mu)
+        lognormal_params = Distributions.find_lognormal_params(mu)
 
         distributions = {
             "Normal": ProbabilityDistributions.normal(mean=normal_params["mean"], std=normal_params["std"]),
             "Uniform": ProbabilityDistributions.uniform(a=uniform_params["a"], b=uniform_params["b"]),
             "Exponential": ProbabilityDistributions.exponential(lambda_param=exponential_params["lambda"]),
-            "Gamma": ProbabilityDistributions.gamma(alpha=gamma_params["alpha"], beta=gamma_params["lambda"])
+            "Gamma": ProbabilityDistributions.gamma(alpha=gamma_params["alpha"], beta=gamma_params["lambda"]),
+            "LogNormal": ProbabilityDistributions.lognormal(mu=lognormal_params["mu"], sigma=lognormal_params["sigma"])
         }
 
         # Initialize a dictionary to store intermediate results for averaging

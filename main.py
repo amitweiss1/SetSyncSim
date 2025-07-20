@@ -14,6 +14,7 @@ from hyperloglog import calc_hyperloglog
 import Distributaions as Distributions
 from strata import estimate_symmetric_difference_strata
 import os
+from math import log, sqrt
 
 
 class Distribution:
@@ -97,7 +98,7 @@ def calc_expectation(set1: Set[Node]) -> float:
     total = sum(node.get_probability() for node in set1)
     return total / len(set1) if set1 else 0.0
 
-def calc_theoretical_entropy(pdf, a=0, b=1, num_points=1000):
+def calc_continuous_entropy(pdf, a=0, b=1, num_points=1000):
     xs = np.linspace(a, b, num_points)
     pdf_vals = np.array([pdf(x) for x in xs])
     pdf_vals = np.clip(pdf_vals, 1e-12, None)
@@ -105,18 +106,33 @@ def calc_theoretical_entropy(pdf, a=0, b=1, num_points=1000):
     entropy = trapezoid(entropy_integrand, xs)
     return entropy
 
-# def calc_entropy(set1, num_bins=50):
-#     values = [node.value for node in set1]
-#     hist, _ = np.histogram(values, bins=num_bins, range=(0, 1), density=False)
-#     p = hist / np.sum(hist)
-#     p = p[p > 0]  # ignore empty bins
-#     entropy = -np.sum(p * np.log(p))  # ln → units: nats
-#     return entropy
+def calc_discrete_entropy(set1: Set[Node]) -> float:
+    probs = np.array([node.get_probability() for node in set1])
+    probs /= np.sum(probs)
+    probs = probs[probs > 0]
+    return -np.sum(probs * np.log(probs))
 
 def calculate_max_pdf(pdf: Callable[[float], float], resolution: int = 1000) -> float:
     x_values = np.linspace(0, 1, resolution)
     pdf_values = [pdf(x) for x in x_values]
     return max(pdf_values)
+
+def calc_entropy_of_rounded_probs(set1: Set[Node], precision: int = 1) -> float:
+    probs = np.array([node.get_probability() for node in set1])
+    rounded_probs = np.round(probs, decimals=precision)
+    unique, counts = np.unique(rounded_probs, return_counts=True)
+    p = counts / np.sum(counts)
+    entropy = -np.sum(p * np.log(p))
+    return entropy
+
+def calc_entropy_from_histogram(set1: Set[Node], num_bins: int = 20) -> float:
+    probs = np.array([node.get_probability() for node in set1])
+    hist, _ = np.histogram(probs, bins=num_bins, range=(0, 1), density=False)
+    p = hist / np.sum(hist)
+    p = p[p > 0]
+    entropy = -np.sum(p * np.log(p))
+    non_empty_bins = np.count_nonzero(hist)
+    return entropy/log(non_empty_bins)
 
 
 def run_simulation(set_size: int, prob_func: Callable[[float], float], max_pdf: float = 1.0,
@@ -124,8 +140,7 @@ def run_simulation(set_size: int, prob_func: Callable[[float], float], max_pdf: 
                    distribution_name: str = "Unknown", expectation: float = 0.0, mu: float = None):
     set1 = generate_first_set(set_size, prob_func, max_pdf)
     expectation = calc_expectation(set1)
-    #entropy = calc_entropy(set1)
-    entropy = calc_theoretical_entropy(prob_func)
+    entropy = calc_entropy_from_histogram(set1)
     set2 = generate_second_set(set1)
 
     new_set1 = {node.value for node in set1}
@@ -135,8 +150,12 @@ def run_simulation(set_size: int, prob_func: Callable[[float], float], max_pdf: 
     actual_diff = union - intersection
 
     # Estimate symmetric difference using SOTA algorithms estimator
-    symmetric_diff_minhash = calc_symmetric_diff_minhash(new_set1, new_set2)
-    symmetric_diff_theoretical = (1 - expectation) * len(new_set1)
+    set_length = len(new_set1)
+    symmetric_diff_minhash_log = calc_symmetric_diff_minhash(new_set1, new_set2, int(log(set_length)))
+    symmetric_diff_minhash_sqrt = calc_symmetric_diff_minhash(new_set1, new_set2, int(sqrt(set_length)))
+    symmetric_diff_minhash_half = calc_symmetric_diff_minhash(new_set1, new_set2, int(set_length / 2))
+
+    symmetric_diff_theoretical = (1 - expectation) * set_length
     symetric_diff_strata = estimate_symmetric_difference_strata(new_set1, new_set2)
 
     print(f"\n============== {distribution_name} Distribution ===============")
@@ -146,11 +165,11 @@ def run_simulation(set_size: int, prob_func: Callable[[float], float], max_pdf: 
     print(f"Intersection size: {intersection}")
     print(f"Union size: {union}")
     print(f"\nActual diff size: {actual_diff:.4f}")
-    print(f"Expectation of symmetric diff: {symmetric_diff_theoretical:4f}")
+    print(f"Symmetric diff MinHash (log): {symmetric_diff_minhash_log:.4f}")
+    print(f"Symmetric diff MinHash (sqrt): {symmetric_diff_minhash_sqrt:.4f}")
+    print(f"Symmetric diff MinHash (len/2): {symmetric_diff_minhash_half:.4f}")
     print(f"Entropy of Set 1: {entropy:.4f}")
-    print(f"MinHash symmetric diff: {symmetric_diff_minhash:.4f}")
     print(f"Strata symmetric diff: {symetric_diff_strata:.4f}")
-
 
     # Return results for plotting
     return [
@@ -159,16 +178,32 @@ def run_simulation(set_size: int, prob_func: Callable[[float], float], max_pdf: 
             "Mean": mu,
             "SetSize": set_size,
             "Entropy": entropy,
-            "Algorithm": "MinHash",
-            "ErrorPercent": abs(symmetric_diff_minhash - actual_diff) / actual_diff * 100 if actual_diff > 0 else 0
+            "Algorithm": "MinHash (log)",
+            "ErrorPercent": (symmetric_diff_minhash_log - actual_diff) / actual_diff * 100 if actual_diff > 0 else 0
         },
         {
             "Distribution": distribution_name,
             "Mean": mu,
             "SetSize": set_size,
             "Entropy": entropy,
-            "Algorithm": "Theoretical Expectation",
-            "ErrorPercent": abs(symmetric_diff_theoretical - actual_diff) / actual_diff * 100 if actual_diff > 0 else 0
+            "Algorithm": "MinHash (sqrt)",
+            "ErrorPercent": (symmetric_diff_minhash_sqrt - actual_diff) / actual_diff * 100 if actual_diff > 0 else 0
+        },
+        {
+            "Distribution": distribution_name,
+            "Mean": mu,
+            "SetSize": set_size,
+            "Entropy": entropy,
+            "Algorithm": "MinHash (len/2)",
+            "ErrorPercent": (symmetric_diff_minhash_half - actual_diff) / actual_diff * 100 if actual_diff > 0 else 0
+        },
+        {
+            "Distribution": distribution_name,
+            "Mean": mu,
+            "SetSize": set_size,
+            "Entropy": entropy,
+            "Algorithm": "Expectation",
+            "ErrorPercent": (symmetric_diff_theoretical - actual_diff) / actual_diff * 100 if actual_diff > 0 else 0
         },
         {
             "Distribution": distribution_name,
@@ -176,7 +211,7 @@ def run_simulation(set_size: int, prob_func: Callable[[float], float], max_pdf: 
             "SetSize": set_size,
             "Entropy": entropy,
             "Algorithm": "Strata",
-            "ErrorPercent": abs(symetric_diff_strata - actual_diff) / actual_diff * 100 if actual_diff > 0 else 0
+            "ErrorPercent": (symetric_diff_strata - actual_diff) / actual_diff * 100 if actual_diff > 0 else 0
         }
     ]
 
@@ -215,10 +250,7 @@ def print_plots(results):
             if subset.empty:
                 continue
             plt.figure(figsize=(10, 6))
-            ax = sns.scatterplot(data=subset, x="Entropy", y="ErrorPercent", hue="Algorithm", alpha=0.7)
-            # Annotate each point with its distribution
-            for i, row in subset.iterrows():
-                plt.text(row["Entropy"], row["ErrorPercent"], row["Distribution"], fontsize=8, alpha=0.7)
+            sns.lineplot(data=subset, x="Entropy", y="ErrorPercent", hue="Algorithm", style="Algorithm", markers=True)
             plt.title(f"Prediction Error vs. Entropy\nMean: {mu}, SetSize: {size} (All Distributions)")
             plt.ylabel("Error [%]")
             plt.xlabel("Entropy")
@@ -248,7 +280,7 @@ if __name__ == "__main__":
     print("Running simulation...")
     results = []
     set_sizes = [100, 500, 1000, 2000]
-    mus = [0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]
+    mus = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]
     num_rehearsals = 5  # Number of repetitions per parameter set
 
     for mu in mus:
